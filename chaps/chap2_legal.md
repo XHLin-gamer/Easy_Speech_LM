@@ -1,1 +1,0 @@
-https://www.bunka.go.jp/seisaku/chosakuken/aiandcopyright.html
