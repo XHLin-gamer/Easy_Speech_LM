@@ -64,8 +64,8 @@
 .dialogue {
   --avatar-size: clamp(2.75rem, 10vw, 5.625rem);
   --gap: clamp(.75rem, 2vw, 1.5rem);
-  color: #34343d;
-  font-family: "Hiragino Kaku Gothic ProN", "Yu Gothic", Meiryo, sans-serif;
+  color: #010102;
+  font-family: "Moralerspace";
   margin-block: 2rem;
   line-height: 1.85;
 }
