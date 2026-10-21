@@ -3,7 +3,7 @@
     <div class="person">
       <span class="avatar">
         <img
-          src="pics\四国めたん\22_実況_announcing.png"
+          src="../assets/shared/characters/四国めたん/22_実況_announcing.png"
           alt=""
           style="transform: scaleX(-1);"
         >
@@ -19,7 +19,7 @@
   <div class="talk zundamon">
     <div class="person">
       <span class="avatar">
-        <img src="pics\ずんだもん\04_嬉しい_happy.png" alt="">
+        <img src="../assets/shared/characters/ずんだもん/04_嬉しい_happy.png" alt="">
       </span>
       <span>ずんだもん</span>
     </div>
@@ -32,7 +32,7 @@
   <div class="talk tsumugi">
     <div class="person">
       <span class="avatar">
-        <img src="pics\春日部つむぎ\04_キメ顔_posing.png" alt="">
+        <img src="../assets/shared/characters/春日部つむぎ/04_キメ顔_posing.png" alt="">
       </span>
       <span>つむぎ</span>
     </div>
@@ -46,7 +46,7 @@
     <div class="person">
       <span class="avatar">
         <img
-          src="pics\四国めたん\22_実況_announcing.png"
+          src="../assets/shared/characters/四国めたん/22_実況_announcing.png"
           alt=""
           style="transform: scaleX(-1);"
         >

@@ -46,7 +46,7 @@
 
 | 東京は日本の… | 仕事が… |
 | :---: | :---: |
-| ![東京は日本の…](pics/next_token.svg) | ![仕事が…](pics/next_token2.svg) |
+| ![東京は日本の…](assets/chap1_intro/images/next_token.svg) | ![仕事が…](assets/chap1_intro/images/next_token2.svg) |
 
 **つむぎ**：
 たとえば「東京は日本の」という文章をLLMに与えると、その続きを予測してくれるの。
@@ -70,7 +70,7 @@
 ここで注意してほしいのは、トークンの区切りは、人間が考える単語の区切りと必ずしも一致しないということ。
 たとえば「吾輩は猫である。」をトークナイザーにかけると、こんな番号の列になるわ。
 
-![alt text](pics/Tokenizer_吾輩は猫である.png)
+![alt text](assets/chap1_intro/images/Tokenizer_吾輩は猫である.png)
 
 **ずんだもん**：
 一文字なのに、トークンが二つ以上になっているところがあるのだ！
@@ -88,7 +88,7 @@
 その通り。
 まとめると、LLMが文章を生成する流れはこうなるわ。
 
-![alt text](pics/LLM.gif)
+![alt text](assets/shared/images/LLM.gif)
 
 1. トークナイザーを使って、プロンプトをトークンの列に変換する
 2. LLMで、次に来るトークンの確率を予測する
@@ -125,7 +125,7 @@
 実は、コンピューターに保存された音声は、すでに数値の列になっているの。
 波の高さをとても細かい時間間隔で測って、記録しているのよ。
 
-![alt text](pics/zoom.gif)
+![alt text](assets/shared/images/zoom.gif)
 
 **ずんだもん**：
 数値の列なら、その数値をそのままトークンにすればいいのだ！
@@ -143,7 +143,7 @@
 そうなの。これだけ長いと、「何を話しているか」のような、長い範囲にわたるつながりをモデルが捉えにくくなるわ。それと、短い音声を生成するために結構長い時間が必要とは難点でしたよ。
 WaveNetに読み上げる文章を与え、音声を生成させた例を聞いてみて。
 
-![alt text](pics/pythonTTSBook.png)
+![alt text](assets/chap1_intro/images/pythonTTSBook.png)
 
 <audio controls src="audio/waveNetJP.wav" title="WaveNet Sample"></audio>
 
@@ -164,7 +164,7 @@ WaveNetに読み上げる文章を与え、音声を生成させた例を聞い�
 ニューラルネットワークで音声から特徴を取り出して、それを、あらかじめ用意した候補の中から一番近いものに置き換えるの。
 その候補の番号を、音声のトークンとして扱うわけね。
 
-![alt text](pics/辞書.png)
+![alt text](assets/chap1_intro/images/辞書.png)
 
 **つむぎ**：
 なるほど。あらかじめ「声の辞書」みたいなものを用意しておいて、入力された声に一番近い項目の番号をトークンにするってことね。
@@ -228,7 +228,7 @@ WaveNetに読み上げる文章を与え、音声を生成させた例を聞い�
 そして、生成したトークンをコーデックで音声に戻すのよ。
 流れは、さっきの文章の場合とほとんど同じね。
 
-![alt text](pics/SLM.gif)
+![alt text](assets/shared/images/SLM.gif)
 
 1. Neural Codecを使って、入力の音声（プロンプト）をトークンの列に変換する
 2. 言語モデルで、次に来る音声トークンを予測する
