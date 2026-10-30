@@ -7,7 +7,7 @@
  
 ![alt text](assets/chap2_tokenizer/images/電話.png)
  
-めたん：その通りです。声は符号に変換されて送られ、受け取った側でその符号から声を復元します。だから届くのは「符号から復元した声」で、厳密には「本人によく似た他人の声」なんです。
+めたん：その通りです。声は符号に変換されて送られ、受け取った側でその符号から声を復元します。だから電話越しに聞こえたのはあくまでも「符号から復元した声」で、厳密には「本人によく似た他人の声」なんです。
  
 つむぎ：電話の声って音質が悪いもんね。圧縮で情報が削られてるからなんだ。
  
@@ -47,41 +47,63 @@
 
 めたん：Neural Codecは、深層学習を使ったCodecです。従来の手法とは圧縮性能が桁違いなんです。実際に聞き比べてみましょう。まずは原音から。
 
-<audio controls src="../src/chap3/EMOTION100_001.wav" title="Title"></audio>
+<audio controls src="../chaps/assets/chap2_tokenizer/audio/reference_48k.wav" title="Title"></audio>
 
-めたん：次に、ネット通話でよく使われる従来型のCodec「Opus」を、Neural Codecの一つであるMimiと同じくらいのビットレート（約1kbps）まで落とすと、こうなります。
+めたん：次に、ネット通話でよく使われる従来型のCodec「Opus」を、Neural Codecの一つであるMimiと同じくらいのビットレート（約5kbps）まで落とすと、こうなります。
 
-<audio controls src="../src/chap3/opus_results/EMOTION100_001_1k_decoded.wav" title="Title"></audio>
+<audio controls src="../chaps/assets/chap2_tokenizer/audio/opus_2.2k.wav" title="Title"></audio>
 
 ずんだもん：うわ、ガビガビで何を言ってるのか分からないのだ！
 
 めたん：では、同じくらいのビットレートでMimiを使うと……
 
 <!-- TODO: Mimiで圧縮・復元した音声のパスを入れる -->
-<audio controls src="（Mimiの復元音声）" title="Title"></audio>
+<audio controls src="../chaps/assets/chap2_tokenizer/audio/qwen3_48k.wav" title="Title"></audio>
 
 ずんだもん：ほとんど元の声と同じなのだ！ どうやってるのだ？
 
+めたん：実はVQVAEという手法を使って…
+
+つむぎ：はいはいはい、それはよく画像生成にも用いられる手法だよね。
+
+
+## VQ-VAE
+
+
+
 ![alt text](assets/chap2_tokenizer/images/vqvae.png)
 
-つむぎ：イメージとしては、ペアになった2つのモデルを用意する感じかな。1つ（エンコーダー）が音声を短い符号に変換して、もう1つ（デコーダー）が符号から音声を復元する。間には、量子化もはさんで、トークンを離散化するって感じかな
+つむぎ：VQ-VAEは、ペアになった2つのモデルでできてるの。1つ目の**エンコーダー**がデータを短い符号に変換して、2つ目の**デコーダー**が符号から元のデータを復元する。その間に**量子化**をはさんで、符号を「番号」、つまり離散的なトークンにしちゃうって感じかな。
 
-めたん：その通りです。この構造はVQ-VAEとして知られています。
-<!-- 日本語にすると「ベクトル量子化を使った変分オートエンコーダー」です。 -->
+めたん：言葉だけだと分かりにくいですから、画像の例で見てみましょう。
 
-つむぎ：VQ-VAEって、もともと画像生成でよく使われてたやつだよね。
+![alt text](assets/chap2_tokenizer/images/vq_process.png)
 
-![alt text](assets/chap2_tokenizer/images/discrete_codes.png)
+つむぎ：MNISTの手書き数字でやってみるね。まず、28×28の画像を4×4の小さなパーツに切り分ける。縦7個×横7個で、全部で49個になるよ。次に、エンコーダーが各パーツを1本の短いベクトルに変換する。最後に、そのベクトルを「よく出てくる代表的なパターン」のうちいちばん似ているものに置き換えて、その番号だけを残すの。
 
-めたん：ええ。まず、エンコーダーで画像を「潜在空間」というベクトルの空間に写します。次に、その空間の中に代表点（コードブック）をいくつか用意して、各ベクトルをいちばん近い代表点に置き換えます。最後に、デコーダーが代表点から画像を復元します。このとき潜在空間は、「どの代表点にいちばん近いか」によって分割され、ボロノイ図のような形になるんです。このすべてが自動的に学習することができ、人為的に代表点を選定する必要がありません。
+そうすると、28×28＝784ピクセルの画像が、たった49個の整数で表せちゃうってわけ。図の真ん中を見てね。何も書かれていない背景のパーツは、全部同じ「22番」になってるでしょ？
 
-![alt text](Voronoi.png)
+めたん：その代表パターンの一覧が、前にお話しした「辞書」です。専門用語では**コードブック**と呼びます。
 
-ずんだもん：なるほど、四捨五入みたいなものなのだ。少し情報を捨ててもだいたい復元できる空間を作って、その中に代表点を置いて、周りの点をぜんぶ代表点に寄せる。そうすれば、代表点の番号だけ送ればいいのだ！ でも、具体的にはどう作るのだ？
+仕組みを整理すると、こうなります。
 
-## VQVAE
+1. エンコーダーが、データを「潜在空間」と呼ばれるベクトルの空間に写す。
+2. 潜在空間の中に代表点（コードブック）をいくつか用意して、各ベクトルをいちばん近い代表点に置き換える。
+3. デコーダーが、代表点から元のデータを復元する。
+
+このとき潜在空間は「どの代表点にいちばん近いか」で区切られるので、ボロノイ図のような形になります。
+
+![alt text](../chaps\assets\chap2_tokenizer\images\ボロノイ.png)
+
+ポイントは、代表点を人の手で選ぶ必要がないことです。エンコーダーもデコーダーもコードブックも、すべてデータから自動的に学習されます。
+
+つむぎ：ちなみにデコーダーは、エンコーダーと左右対称のシンプルな畳み込みネットワークで十分だよ。音声の場合も考え方は同じで、2次元の画像の代わりに1次元の波形を扱うだけ。
+
+ずんだもん：なるほど、四捨五入みたいなものなのだ！ 少し情報を捨ててもだいたい復元できる空間を作って、その中に代表点を置いて、周りの点をぜんぶ代表点に寄せる。そうすれば、代表点の番号だけ送ればいいのだ！ ……でも、具体的にはどうやって学習するのだ？
+
 
 ### Encoder & Decoder
+
 つむぎ：画像の例で説明するね。音声もデータの次元が違うだけで、仕組みはほぼ同じだから。まずはエンコーダーとデコーダーから始めよう。基本的に、このような構造が考えられる
 
 ![alt text](assets/chap2_tokenizer/images/encoderAndDecoder.png)
@@ -93,44 +115,38 @@
 つむぎ：コードに落とすとこんな感じです。
 
 ```python
-class Encoder(nn.Module):
-    def __init__(self, embedding_dim=16):
+EPOCHS, BATCH = 100, 128
+DIM, CODES, BETA = 4, 64, 0.25        # latent size, codebook size, commitment weight
+ADAMW_LR = 1e-5
+OUT = Path('output3')
+
+class VQVAE(nn.Module):
+    def __init__(self):
         super().__init__()
+        # kernel == stride, no padding → non-overlapping windows.
+        # Two 2×2/stride-2 layers ⇒ each latent cell sees exactly one 4×4 pixel patch (28/4 = 7).
+        self.enc = nn.Sequential(nn.Conv2d(1, 32, 2, 2, 0), nn.GELU(),
+                                 nn.Conv2d(32, DIM, 2, 2, 0))
+        # Same in the decoder: each code only paints its own 4×4 patch.
+        self.dec = nn.Sequential(nn.ConvTranspose2d(DIM, 32, 2, 2, 0), nn.GELU(),
+                                 nn.ConvTranspose2d(32, 1, 2, 2, 0), nn.Sigmoid())
+        self.codebook = nn.Embedding(CODES, DIM)
+        nn.init.uniform_(self.codebook.weight, -1 / CODES, 1 / CODES)
 
-        self.layers = nn.Sequential(
-            # [B, 1, 28, 28] -> [B, 32, 14, 14]
-            nn.Conv2d(1, 32, kernel_size=4, stride=2, padding=1),
-            nn.GELU(),
-
-            # [B, 32, 14, 14] -> [B, embedding_dim, 7, 7]
-            nn.Conv2d(32, embedding_dim, kernel_size=4, stride=2, padding=1),
-        )
+    def encode(self, x):
+        """Encoder vectors, one per row, and the index of each one's nearest code."""
+        z = self.enc(x).permute(0, 2, 3, 1).reshape(-1, DIM)
+        return z, torch.cdist(z, self.codebook.weight).argmin(1)
 
     def forward(self, x):
-        return self.layers(x)
-
-
-class Decoder(nn.Module):
-    def __init__(self, embedding_dim=16):
-        super().__init__()
-
-        self.layers = nn.Sequential(
-            # [B, embedding_dim, 7, 7] -> [B, 32, 14, 14]
-            nn.ConvTranspose2d(
-                embedding_dim, 32, kernel_size=4, stride=2, padding=1
-            ),
-            nn.GELU(),
-
-            # [B, 32, 14, 14] -> [B, 1, 28, 28]
-            nn.ConvTranspose2d(32, 1, kernel_size=4, stride=2, padding=1),
-            nn.Sigmoid(),
-        )
-
-    def forward(self, z):
-        return self.layers(z)
+        z, idx = self.encode(x)
+        q = self.codebook(idx)
+        vq_loss = F.mse_loss(q, z.detach()) + BETA * F.mse_loss(z, q.detach())
+        q = z + (q - z).detach()          # straight-through: decoder gradients flow to the encoder
+        q = q.view(len(x), 7, 7, DIM).permute(0, 3, 1, 2)
+        return self.dec(q), vq_loss
 ```
 
-つむぎ：今はMNIST画像の場合を考えている。エンコーダーは28×28の画像を、7×7個の16次元ベクトルに縮める。デコーダーはその逆をやる。左右対称の、シンプルな畳み込みネットワークで十分だよ。音声なら、2次元の画像の代わりに1次元の波形を扱うだけ。
 
 ずんだもん：これは後で新たな層を追加したり、中身を変えたりするのも簡単そうだな。
 
@@ -250,55 +266,8 @@ tensor([[ 0.6069, -0.2373],
 つむぎ：実はまだ3つ問題が残ってるんだよね。1つ目は計算の重さ、2つ目がいちばん大事な「学習できない」問題。順番に片づけていこう。
 
 
-#### その1：距離の計算を軽くする
 
-つむぎ：次は計算の重さ。さっきのBroadcastは分かりやすいけど、[ベクトルの数, N, D]っていう巨大な中間テンソルを作っちゃうんだよね。
-
-めたん：具体的に計算してみましょう。バッチ64枚、7×7マス、コードブック512個、ベクトル64次元だとすると、中間テンソルは 64×49×512×64 ≒ 1億個の数値で、約411MBになります。音声は画像よりずっと長いので、すぐにメモリが足りなくなります。
-
-ずんだもん：距離を求めるだけで411MBはもったいないのだ。
-
-つむぎ：そこで、中学校で習った展開公式を使うの。
-
-$$
-\|a - b\|^2 = \|a\|^2 + \|b\|^2 - 2\, a \cdot b
-$$
-
-つむぎ：右辺の3つの項は、どれもD次元を足し終えた後の値だから、[ベクトルの数, N]の大きさで済む。特に最後の内積は行列の掛け算（@）1回で全部まとめて計算できるから、GPUが得意な計算になるんだ。
-
-めたん：同じ例だと、必要なのは 64×49×512 個、約6.4MBです。64分の1ですね。
-
-ずんだもん：本当に同じ答えになるのだ？
-
-つむぎ：小さい例で確かめてみよう。
-
-```python
-x = torch.tensor([[1., 2.]])                 # 入力ベクトル1本
-codebook = torch.tensor([[0., 0.], [3., 4.]])  # 代表点2個
-
-# Broadcast版
-d1 = (codebook.unsqueeze(0) - x.unsqueeze(1)).square().sum(dim=-1)
-
-# 展開公式版
-d2 = (
-    x.square().sum(dim=1, keepdim=True)  # ||a||^2 : [1, 1]
-    + codebook.square().sum(dim=1)       # ||b||^2 : [2]
-    - 2 * x @ codebook.T                 # 2 a·b   : [1, 2]
-)
-print(d1)
-print(d2)
-```
-
-```bash
-tensor([[5., 8.]])
-tensor([[5., 8.]])
-```
-
-ずんだもん：ぴったり一致したのだ！ (1, 2)から(0, 0)までが1+4=5、(3, 4)までが4+4=8なのだ。
-
-めたん：ちなみに、ルートを取らずに二乗距離のまま比べているのは、ルートを取っても大小関係は変わらないからです。いちばん近いものを選ぶだけなら、二乗距離で十分なんです。
-
-#### その2：学習できない問題
+#### 学習できない問題
 
 つむぎ：さて、ここからが本番。VQ-VAEは、エンコーダー、VQ、デコーダーをまとめて学習させたい。「復元した画像が元の画像に近づくように」ね。
 
@@ -462,7 +431,7 @@ class VectorQuantizer(nn.Module):
         return quantized, vq_loss, indices
 ```
 
-ずんだもん：まとめると、①形を整えて、②いちばん近い代表点を効率よく探して、③置き換えたうえで、④Straight-Throughでエンコーダーに勾配を通し、⑤2つの損失でコードブックとエンコーダーを歩み寄らせる、なのだ！
+ずんだもん：まとめると、①形を整えて、②いちばん近い代表点を効率よく探して、③置き換えたうえで、④Straight-Throughでエンコーダーに勾配を通し、⑤2つの損失でコードブックとエンコーダーを歩みx寄らせる、なのだ！
 
 つむぎ：完璧！
 
