@@ -118,37 +118,29 @@
 つむぎ：コードに落とすとこんな感じです。
 
 ```python
-DIM, CODES, BETA = 4, 64, 0.25        # latent size, codebook size, commitment weight
-
 class VQVAE(nn.Module):
     def __init__(self):
         super().__init__()
-        # kernel == stride, no padding → non-overlapping windows.
-        # Two 2×2/stride-2 layers ⇒ each latent cell sees exactly one 4×4 pixel patch (28/4 = 7).
-        self.enc = nn.Sequential(nn.Conv2d(1, 32, 2, 2, 0), nn.GELU(),
-                                 nn.Conv2d(32, DIM, 2, 2, 0))
-        # Same in the decoder: each code only paints its own 4×4 patch.
-        self.dec = nn.Sequential(nn.ConvTranspose2d(DIM, 32, 2, 2, 0), nn.GELU(),
-                                 nn.ConvTranspose2d(32, 1, 2, 2, 0), nn.Sigmoid())
-        self.codebook = nn.Embedding(CODES, DIM)
-        nn.init.uniform_(self.codebook.weight, -1 / CODES, 1 / CODES)
+        # kernel = stride = 2 → 畳み込みの窓が重ならない
+        # 2 層で縦横 1/4 になる（28 → 7）。潜在ベクトル 1 つ => 4×4 ピクセルのパッチ 1 つ
+        self.enc = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.Conv2d(in_channels=32, out_channels=DIM, kernel_size=2, stride=2)
+        )
 
-    def encode(self, x):
-        """Encoder vectors, one per row, and the index of each one's nearest code."""
-        z = self.enc(x).permute(0, 2, 3, 1).reshape(-1, DIM)
-        return z, torch.cdist(z, self.codebook.weight).argmin(1)
-
-    def forward(self, x):
-        z, idx = self.encode(x)
-        q = self.codebook(idx)
-        vq_loss = F.mse_loss(q, z.detach()) + BETA * F.mse_loss(z, q.detach())
-        q = z + (q - z).detach()          # straight-through: decoder gradients flow to the encoder
-        q = q.view(len(x), 7, 7, DIM).permute(0, 3, 1, 2)
-        return self.dec(q), vq_loss
+        # エンコーダと対称な構成（7 → 28 に戻す）
+        self.dec = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=DIM, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=2, stride=2),
+            nn.Sigmoid()
+        )
 ```
 
 
-ずんだもん：これは後で新たな層を追加したり、中身を変えたりするのも簡単そうだな。
+ずんだもん：ここは大昔のPyTorchの基本的な使い方な感じがしtえ、懐かしいのだ。
+
 
 ### Vector Quantize
 
