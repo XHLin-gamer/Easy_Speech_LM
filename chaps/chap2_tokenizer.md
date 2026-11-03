@@ -185,9 +185,7 @@ rand = torch.rand((1,2))
 
 | 通り抜けえない | 通り抜く |
 | :---: | :---: |
-| 
-![alt text](assets/chap2_tokenizer/images/non-ste_page-0001.jpg)| ![alt text](assets/chap2_tokenizer/images/ste_page-0001.jpg)
- |
+| ![alt text](assets/chap2_tokenizer/images/non-ste_page-0001.jpg)| ![alt text](assets/chap2_tokenizer/images/ste_page-0001.jpg)|
 
 
 ### いったん組み立てる
