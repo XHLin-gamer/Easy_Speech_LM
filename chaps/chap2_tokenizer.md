@@ -66,7 +66,7 @@
 つむぎ：はいはいはい、それはよく画像生成にも用いられる手法だよね。
 
 
-## VQ-VAE
+### VQ-VAE
 
 
 
@@ -113,7 +113,7 @@
 
 ずんだもん：これは由緒正しい、畳み込みニューラルネットワークの構造だね。
 
-めたん：そう、ちなみに、今使っているのは、あくまでも最小限のネットワークで、実際の
+めたん：そう、ちなみに、今の最新鋭のモデルでも、この部分に関しての構造は大体昔からあったシンプルな構造を流用しているケースが多い。
 
 つむぎ：コードに落とすとこんな感じです。
 
@@ -139,7 +139,7 @@ class VQVAE(nn.Module):
 ```
 
 
-ずんだもん：ここは大昔のPyTorchの基本的な使い方な感じがしtえ、懐かしいのだ。
+ずんだもん：ここは大昔のPyTorchの基本的な使い方な感じがして、懐かしいのだ
 
 
 ### Vector Quantize
@@ -150,179 +150,96 @@ class VQVAE(nn.Module):
 
 ```python
 class VectorQuantizer(nn.Module):
-    def __init__(self, num_embeddings=64, embedding_dim=16, beta=0.25):
+    def __init__(self, codebook_size: int, latent_dim: int):
         super().__init__()
 
-        self.beta = beta  # 後で使うハイパーパラメータ
-        self.codebook = nn.Embedding(num_embeddings, embedding_dim)  # 辞書のオブジェクト、num_embeddings 個の embedding_dim サイズのベクトルによって構成したテーブル
+        self.embbeding = nn.Embedding(codebook_size, latent_dim)
+        nn.init.uniform_(self.embbeding.weight, -1, 1)
 
-        nn.init.uniform_(self.codebook.weight, -1 / num_embeddings, 1 / num_embeddings,)  # 辞書を初期化する
+    def quantize(self, x):
+        idx = torch.cdist(x, self.embbeding.weight).argmin(-1) # argminで勾配が消失しまうから
+        z = self.embbeding.weight[idx]
+        z_q = x + (z - x).detach()                              # Staight-Through 方式
+        return z_q, idx
 ```
 
-このコードを試すと
+つむぎ：結構安直なコードだな
+
+めたん：そう、とりあえず、コードブックを初期化関数の中で定義し、量子化関数で一番距離が小さいコードを求め、それの値とＩＤを戻すということだけな。適当に乱数的な値を入れると、こんな感じにはなります：
 
 ```python
-vq = VectorQuantizer(num_embeddings=2, embedding_dim=8)
-print("辞書の中身：")
-print(vq.codebook.weight)
-print("\n要素を取り出してみよう:")
-print(vq.codebook.weight[0])
-```
-こんな結果となります
-
-```bash
-辞書の中身：
-Parameter containing:
-tensor([[ 0.3854,  0.0739, -0.2334,  0.1274, -0.2304, -0.0586, -0.2031,  0.3317],
-        [-0.3947, -0.2305, -0.1412, -0.3006,  0.0472, -0.4938,  0.4516, -0.4247]],
-       requires_grad=True)
-
-要素を取り出してみよう:
-tensor([ 0.3854,  0.0739, -0.2334,  0.1274, -0.2304, -0.0586, -0.2031,  0.3317],
-       grad_fn=<SelectBackward0>)
+vq =VectorQuantizer(8, 2)
+rand = torch.rand((1,2))
 ```
 
-ずんだもん：要はベクトルのリストをとりあえず定義することだな
+![alt text](assets/chap2_tokenizer/images/vq_voronoi.png)
 
-めたん：その通り。ここに「いちばん近い代表点を探す」機能を追加します。
+ずんだもん：あの変なのはなんのだ？
+
+つむぎ：あれは、「一番小さい値を探す」という操作は基本微分不可能だから、普通の場合、勾配がここで中断してしまうんだよ。
+
+めたん：深層学習には、すべてのモデルが連鎖率によって一気に勾配を計算し、更新する必要があるので、もし勾配の計算が中断してしまったら、全体的には学習が不可能となります。
+
+つむぎ：だから、この「最小値を探す」操作を無視して、無理やり勾配を複製するやり方がこちらのStraight-Through方式、勾配をそのまま通り抜ける方法ね。ここのdetach関数は、作用した部分を勾配計算から外すという意味で、要は、ここのxの勾配をz_qにそのままコピーするってことさ。って、数値的には、z_qはzと同じになる。
+
+
+| 通り抜けえない | 通り抜く |
+| :---: | :---: |
+| 
+![alt text](assets/chap2_tokenizer/images/non-ste_page-0001.jpg)| ![alt text](assets/chap2_tokenizer/images/ste_page-0001.jpg)
+ |
+
+
+### いったん組み立てる
+
+めたん:それじゃ、いったんすべてのコードを組み立てて、流れを見よう。
 
 ```python
+# DIM   : 潜在ベクトルの次元数
+# CODES : コードブックのサイズ（コード数）
+# BETA  : Commitment Loss の重み
+DIM, CODES, BETA = 4, 64, 0.25
 
-class VectorQuantizer(nn.Module):
-    def __init__(self, num_embeddings=64, embedding_dim=16, beta=0.25):
+class VQVAE(nn.Module):
+    def __init__(self, latent_dim):
         super().__init__()
-        self.beta = beta
-        self.codebook = nn.Embedding(num_embeddings, embedding_dim)
-        nn.init.uniform_(self.codebook.weight, -1, 1)
+        # kernel = stride = 2 → 畳み込みの窓が重ならない
+        # 2 層で縦横 1/4 になる（28 → 7）。潜在ベクトル 1 つ => 4×4 ピクセルのパッチ 1 つ
+        self.enc = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.Conv2d(in_channels=32, out_channels = latent_dim, kernel_size=2, stride=2)
+        )
 
+        # エンコーダと対称な構成（7 → 28 に戻す）
+        self.dec = nn.Sequential(
+            nn.ConvTranspose2d(in_channels = latent_dim, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=2, stride=2),
+            nn.Sigmoid()
+        )
+        
+        self.quantizer = VectorQuantizer(num_embeddings=CODES, embedding_dim=DIM)
+        
+    def encode(self, x):
+        z_raw = self.enc(x)
+        # チャネル（＝潜在次元）を最後に移し、位置ごとのベクトルをすべて一行に並べる
+        z = z_raw.permute(0, 2, 3, 1).reshape(-1, DIM)
+        z_q = self.quantizer(z)
+        return z_q
+    
+    def decode(self, z_q):
+        return self.decode(z_q)
+    
     def forward(self, x):
-        # x: [B, D]
-        # codebook: [N, D]
-        # squared_distances: [B, N]
-        squared_distances = (
-            self.codebook.weight.unsqueeze(0) - x.unsqueeze(1)
-        ).square().sum(dim=-1)
-
-        indices = squared_distances.argmin(dim=1)
-        return self.codebook(indices), indices
+        z_q = self.encode(x)
+        # (B*7*7, DIM) → (B, DIM, 7, 7) に戻してデコーダへ
+        z_q = z_q.view(len(x), 7, 7, DIM).permute(0, 3, 1, 2)
+        return self.decode(z_q)   
 ```
-めたん：ここではBroadcastというテクニックを使って、入力ベクトルとコードブックの全ベクトルとの（二乗）ユークリッド距離を一度に計算しています。[B, 1, D]と[1, N, D]の差を取ると、自動的に[B, N, D]に引き伸ばされるんです。なお、図で見やすくするために、ここでは初期化の範囲を-1〜1に広げています。
-同じく試してみると
+めたん：こんな感じになります。
 
-```python
-vq = VectorQuantizer(num_embeddings=10, embedding_dim=2)
-
-print("辞書の中身：")
-print(vq.codebook.weight)
-
-print("\n一番近いやつを探す:")
-x = torch.tensor([
-    [0.2, 0.1],
-    [0.5, 0.5],
-    [-0.5, 0.3]
-])
-
-quantized, indices = vq(x)
-print(quantized)
-```
-こんな感じになります
-
-```bash
-辞書の中身：
-Parameter containing:
-tensor([[-0.5964, -0.5964],
-        [ 0.8994,  0.3333],
-        [ 0.9623, -0.8253],
-        [-0.9919, -0.7824],
-        [-0.6727,  0.4050],
-        [ 0.3581,  0.8309],
-        [-0.5164, -0.6817],
-        [ 0.5306, -0.4042],
-        [ 0.6069, -0.2373],
-        [ 0.5720, -0.7770]], requires_grad=True)
-
-一番近いやつを探す:
-tensor([[ 0.6069, -0.2373],
-        [ 0.3581,  0.8309],
-        [-0.6727,  0.4050]])
-```
-ちなみに、前に説明したボロノイ図の視点から見ると、こんな感じになります。
-![alt text](vaeLatent10.png)
-格子の内部の空間のすべての点が、選択された母点に収束しに行くイメージです。母点をより多く設置すると、この近似の精度ももちろん上がります
-![alt text](vaeLatent64.png)
-
-
-
-ずんだもん：これで「いちばん近い代表点に置き換える」はできたのだ！ もう完成なのだ？
-
-つむぎ：実はまだ3つ問題が残ってるんだよね。1つ目は計算の重さ、2つ目がいちばん大事な「学習できない」問題。順番に片づけていこう。
-
-
-
-#### 学習できない問題
-
-つむぎ：さて、ここからが本番。VQ-VAEは、エンコーダー、VQ、デコーダーをまとめて学習させたい。「復元した画像が元の画像に近づくように」ね。
-
-ずんだもん：普通のニューラルネットワークと同じように、誤差逆伝播で学習すればいいのだ？
-
-つむぎ：それが、argminのところで止まっちゃうんだよ。
-
-```python
-d = torch.tensor([0.3, 0.1, 0.5], requires_grad=True)
-i = d.argmin()
-print(i, i.requires_grad)
-```
-
-```bash
-tensor(1) False
-```
-
-めたん：argminが返すのは「何番目か」という整数です。距離が少し変わっても、答えは1のまま変わらないか、いきなり別の番号に飛ぶかのどちらかです。だから「少しずらすとどれだけ変わるか」、つまり勾配が定義できません。
-
-ずんだもん：勾配が途切れると、どうなるのだ？
-
-つむぎ：デコーダーは学習できるけど、エンコーダーまで勾配が届かない。エンコーダーは「どういう潜在ベクトルを出せば復元がうまくいくのか」を一生学べないんだ。
-
-#### Straight-Through推定
-
-めたん：そこで使うのが、Straight-Through推定というトリックです。コードはたった1行です。
-
-```python
-quantized = z + (quantized - z).detach()
-```
-
-ずんだもん：zを足して、zを引いてる……結局quantizedのままなのだ？
-
-つむぎ：値としてはその通り。順伝播では、z + (quantized - z) = quantized だから、デコーダーにはちゃんと量子化後の値が渡る。ポイントは.detach()のほう。detach()は「この部分は定数として扱って、勾配を流さないで」という意味なの。
-
-めたん：つまり、逆伝播のときPyTorchから見ると、この式は「z + 定数」に見えるんです。z + 定数をzで微分すると1なので、デコーダーから戻ってきた勾配が、そのままzに、つまりエンコーダーに届きます。
-
-つむぎ：確かめてみよう。
-
-```python
-z = torch.tensor([0.2, 0.1], requires_grad=True)  # エンコーダーの出力
-q = torch.tensor([0.5, 0.5])                        # 選ばれた代表点
-
-out = z + (q - z).detach()
-print(out)
-
-loss = (out * torch.tensor([1., 2.])).sum()  # 適当な損失
-loss.backward()
-print(z.grad)
-```
-
-```bash
-tensor([0.5000, 0.5000], grad_fn=<AddBackward0>)
-tensor([1., 2.])
-```
-
-ずんだもん：値は代表点の(0.5, 0.5)なのに、勾配は損失の[1, 2]がそのままzに届いてるのだ！
-
-めたん：「代表点での勾配を、そのままエンコーダーの出力での勾配とみなす」という近似です。代表点とzは近いはずなので、だいたい正しい方向を指している、という考え方ですね。
-
-ずんだもん：値の精度を維持して、勾配をコピーするのはよく考えられたな。
-
-#### コードブックはどうやって学習する？
+### コードブックの学習方法
 
 つむぎ：これでエンコーダーとデコーダーは学習できるようになった。でも、まだ1つ抜けてるものがあるんだよね。
 
@@ -330,129 +247,166 @@ tensor([1., 2.])
 
 つむぎ：正解！ Straight-Throughの式を見直すと、quantizedは.detach()の中に入ってる。つまり、復元の誤差からはコードブックに勾配が1ミリも流れないの。
 
-```python
-codebook = nn.Embedding(3, 2)
-z = torch.tensor([[0.2, 0.1]], requires_grad=True)
-
-idx = (codebook.weight - z).square().sum(dim=-1).argmin()
-q = codebook(idx)
-
-out = z + (q - z).detach()
-out.sum().backward()
-
-print(z.grad)
-print(codebook.weight.grad)
-```
-
-```bash
-tensor([[1., 1.]])
-None
-```
-
-ずんだもん：エンコーダー側には勾配が届いてるのに、コードブックはNone、つまり何も学習してないのだ！
-
 めたん：そこで、コードブック専用の損失を別に用意します。それが2つの損失です。
 
 ```python
-codebook_loss = F.mse_loss(quantized, z.detach())
-commitment_loss = F.mse_loss(z, quantized.detach())
-vq_loss = codebook_loss + self.beta * commitment_loss
+# 第1項: コードブックをエンコーダ出力に近づける（エンコーダ側は固定）
+# 第2項: エンコーダ出力をコードに近づける＝Commitment Loss（コードブック側は固定）
+codebook_loss = F.mse_loss(q, z.detach())
+commitment_loss = F.mse_loss(z, q.detach())
+vq_loss = codebook_loss + BETA * commitment_loss
 ```
-
-つむぎ：どっちも「代表点とエンコーダーの出力の距離」なんだけど、どちらを.detach()するかが違うの。
-
-めたん：codebook_lossはzをdetachしているので、動くのは代表点だけです。「代表点を、自分が担当するエンコーダー出力の方へ引き寄せる」損失ですね。選ばれた代表点だけに勾配が入るので、よく使われる代表点ほど、データが集まる場所へ移動していきます。
-
-つむぎ：commitment_lossはその逆で、代表点をdetachしているから、動くのはエンコーダーの出力だけ。「エンコーダーは、選んだ代表点から勝手に離れないこと」っていう約束（コミットメント）だね。
-
-ずんだもん：なんでエンコーダーにまで約束させる必要があるのだ？
-
-めたん：潜在空間には大きさの制限がないので、放っておくとエンコーダーの出力はどんどん遠くへ散らばってしまいます。代表点が追いかけるのが間に合わなくなると、量子化の誤差が大きくなり、学習が不安定になるんです。
 
 つむぎ：ボロノイ図で言えば、codebook_lossは母点を点の集まりの中心へ動かして、commitment_lossは点を母点の近くに留めておく。両側から歩み寄らせる感じだね。
 
 めたん：betaは、エンコーダー側をどれだけ強く縛るかの重みです。元のVQ-VAEの論文では0.25が使われていて、ここでもそれに合わせています。代表点を動かすほうが主役で、エンコーダーへの縛りは控えめ、というバランスですね。
 
-ずんだもん：ちなみに、一度も選ばれない代表点はどうなるのだ？
+ずんだもん：ここのdetachとは？
 
-めたん：鋭いですね。勾配が入らないので、ずっと動かないままになります。これは「デッドコード」と呼ばれる問題で、使われない代表点を使われている場所の近くへ置き直すなどの対策があります。今回は深入りしませんが、覚えておいてください。
+めたん：qとzをそのまま計算すると、勾配は何になると覚えていますか？
+
+ずんだもん：あ、っそうだ、ゼロになるのだ。
+
+つむぎ：だから、連鎖率上で計算するのではなく；シンプルな定数として入れて計算するのよ。
 
 #### 完成版
 
 つむぎ：ここまでの部品を全部組み合わせると、こうなるよ。最後に、圧縮して送るときに必要な代表点の番号（indices）も返すようにしておこう。
 
 ```python
-class VectorQuantizer(nn.Module):
-    def __init__(self, num_embeddings=64, embedding_dim=16, beta=0.25):
+# DIM   : 潜在ベクトルの次元数
+# CODES : コードブックのサイズ（コード数）
+# BETA  : Commitment Loss の重み
+DIM, CODES, BETA = 4, 64, 0.25
+
+class VQVAE(nn.Module):
+    def __init__(self):
         super().__init__()
-
-        self.beta = beta
-        self.codebook = nn.Embedding(num_embeddings, embedding_dim)
-
-        nn.init.uniform_(self.codebook.weight, -1 / num_embeddings, 1 / num_embeddings,)
-
-    def forward(self, z):
-        # その1：画像の形に対応する
-        # [B, D, H, W] -> [B, H, W, D] -> [B*H*W, D]
-        z = z.permute(0, 2, 3, 1).contiguous()
-        flat_z = z.reshape(-1, z.shape[-1])
-
-        # その2：展開公式で距離を計算する  [B*H*W, N]
-        distances = (
-            flat_z.square().sum(dim=1, keepdim=True)
-            + self.codebook.weight.square().sum(dim=1)
-            - 2 * flat_z @ self.codebook.weight.T
+        # kernel = stride = 2 → 畳み込みの窓が重ならない
+        # 2 層で縦横 1/4 になる（28 → 7）。潜在ベクトル 1 つ => 4×4 ピクセルのパッチ 1 つ
+        self.enc = nn.Sequential(
+            nn.Conv2d(in_channels=1, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.Conv2d(in_channels=32, out_channels=DIM, kernel_size=2, stride=2)
         )
 
-        # いちばん近い代表点を選んで置き換える
-        indices = distances.argmin(dim=1)
-        quantized = self.codebook(indices).view_as(z)
+        # エンコーダと対称な構成（7 → 28 に戻す）
+        self.dec = nn.Sequential(
+            nn.ConvTranspose2d(in_channels=DIM, out_channels=32, kernel_size=2, stride=2),
+            nn.GELU(),
+            nn.ConvTranspose2d(in_channels=32, out_channels=1, kernel_size=2, stride=2),
+            nn.Sigmoid()
+        )
 
-        # コードブックとエンコーダーを歩み寄らせる損失
-        codebook_loss = F.mse_loss(quantized, z.detach())
-        commitment_loss = F.mse_loss(z, quantized.detach())
-        vq_loss = codebook_loss + self.beta * commitment_loss
+        # コードブック：CODES 個の DIM 次元ベクトル
+        self.codebook = nn.Embedding(CODES, DIM)
+        nn.init.uniform_(self.codebook.weight, -1 / CODES, 1 / CODES)
 
-        # その3：Straight-Through推定で勾配をエンコーダーに通す
-        quantized = z + (quantized - z).detach()
+    def encode(self, x):
+        """
+        x: (B, 1, 28, 28)
+        戻り値: z   (B*7*7, DIM) 潜在ベクトル
+                idx (B*7*7,)     各ベクトルに最も近いコード番号
+        """
+        z_raw = self.enc(x)  # (B, DIM, 7, 7)
 
-        # 元の形に戻す: [B, H, W, D] -> [B, D, H, W]
-        quantized = quantized.permute(0, 3, 1, 2).contiguous()
-        indices = indices.view(z.shape[:-1])  # [B, H, W]
+        # チャネル（＝潜在次元）を最後に移し、位置ごとのベクトルをすべて一行に並べる
+        z = z_raw.permute(0, 2, 3, 1).reshape(-1, DIM)
+        
+        # 全コードとのユークリッド距離を計算し、最も近いコードを選ぶ
+        return z, torch.cdist(z, self.codebook.weight).argmin(1)
 
-        return quantized, vq_loss, indices
+    def forward(self, x):
+        z, idx = self.encode(x)
+        q = self.codebook(idx)  # 量子化後のベクトル
+
+        # 第1項: コードブックをエンコーダ出力に近づける（エンコーダ側は固定）
+        # 第2項: エンコーダ出力をコードに近づける＝Commitment Loss（コードブック側は固定）
+        codebook_loss = F.mse_loss(q, z.detach())
+        commitment_loss = F.mse_loss(z, q.detach())
+        vq_loss = codebook_loss + BETA * commitment_loss
+
+        # Straight-Through 推定：順伝播では q を使い、逆伝播では勾配を z にそのまま流す（argmin は微分できないため）
+        q = z + (q - z).detach()
+
+        # (B*7*7, DIM) → (B, DIM, 7, 7) に戻してデコーダへ
+        q = q.view(len(x), 7, 7, DIM).permute(0, 3, 1, 2)
+        return self.dec(q), vq_loss
 ```
-
-ずんだもん：まとめると、①形を整えて、②いちばん近い代表点を効率よく探して、③置き換えたうえで、④Straight-Throughでエンコーダーに勾配を通し、⑤2つの損失でコードブックとエンコーダーを歩みx寄らせる、なのだ！
-
 つむぎ：完璧！
 
+### Residual Vector Quantizer（残差ベクトル量子化）
+ 
+めたん：最後にもう一つ、残差ベクトル量子化（RVQ）を紹介します。VQでは代表点とのズレがどうしても残すので、音声ではそれが不自然さや本人らしくないとして聞こえてしまう。
+ 
+ずんだもん：代表点をもっと増やせばいいのだ？
+ 
+めたん：それは、潜在空間を万篇なく母点で塗りつくすと同じなので、現実的ではありません。そこで、残った誤差を別のコードブックでもう一度量子化し、これを繰り返して最後に全部足します。
+ 
+つむぎ：数字でいうと、3.14159を「3」「0.1」「0.04」…と、大まかな値から順に直していく感じだね。
+ 
+| 段 | 残差 | 量子化 | 合計 |
+|:---:|---:|---:|---:|
+| 1 | 3.14159 | 3 | 3 |
+| 2 | 0.14159 | 0.1 | 3.1 |
+| 3 | 0.04159 | 0.04 | 3.14 |
+ 
+めたん：しかも、1024個のコードブックを8段重ねれば、代表点は8192個だけで 1024⁸ 通りを表せます。
+ 
+ずんだもん：小さい辞書を何冊も組み合わせるのだ！
+ 
+めたん：実装は、さっきの VectorQuantizer を段の数だけ並べるだけです。
+ 
+```python
+class ResidualVectorQuantizer(nn.Module):
+    def __init__(self, num_quantizers: int, codebook_size: int, latent_dim: int):
+        super().__init__()
+        self.layers = nn.ModuleList(
+            [VectorQuantizer(codebook_size, latent_dim) for _ in range(num_quantizers)]
+        )
+ 
+    def quantize(self, x):
+        residual, z_q, indices = x, torch.zeros_like(x), []
+        for vq in self.layers:
+            q, idx = vq.quantize(residual)     # 各段で Straight-Through 込みの普通の VQ
+            z_q = z_q + q
+            residual = residual - q.detach()   # 表せなかった残りを次の段へ
+            indices.append(idx)
+        return z_q, torch.stack(indices, -1)
+```
+ 
+つむぎ：残りを次の段に渡してるだけ。使う段数を変えれば、音質と通信量のバランスも調整できるよ。
+ 
+めたん：実際に聞いてみましょう。元の録音はこちら。
+ 
+<audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original.wav" title="Title"></audio>
+ 
+| 使ったコードブック | 合成音声 |
+|---:|---|
+| 1個（cb0） | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k01.wav" title="Title"></audio> |
+| 2個 | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k02.wav" title="Title"></audio> |
+| 3個 | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k03.wav" title="Title"></audio> |
+| 5個 | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k05.wav" title="Title"></audio> |
+| 9個 | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k09.wav" title="Title"></audio> |
+| 16個（すべて） | <audio controls src="assets/chap2_tokenizer/audio/codebooks_ablation/original_codec_k16.wav" title="Title"></audio> |
+ 
+ずんだもん：増やすほど元の声に近づくのだ！ でも、cb0だけだとノイズみたいなのだ。
+ 
+めたん：cb0だけは特別で、別のモデルから「何を話しているか」という意味の情報を蒸留して学習しています。話の中身やリズムは入っていても声色はほとんど入っていないので、それだけではノイズに聞こえるんです。声らしさを足すのはcb1以降の役目です。
 
-つむぎ：recon_lossはStraight-Throughを通ってデコーダーとエンコーダーを、vq_lossはコードブックとエンコーダーを学習させる。これで全部のパーツに勾配が届くようになったね。
-
-ずんだもん：ところで、これでどれくらい圧縮できてるのだ？
-
-めたん：送るのはindicesだけなので、計算してみましょう。代表点が64個なら、番号1つは6bitで表せます。それが7×7＝49個なので、1枚あたり294bitです。元のMNIST画像は28×28ピクセル×8bit＝6272bitなので、約21分の1になりますね。
-
-ずんだもん：受け取った側は、番号からコードブックで代表点を引いて、デコーダーに通せば画像に戻せるのだ！
-
-つむぎ：実際に学習を回すと、こんなふうに画像を復元できて、潜在空間もきれいに分割されるよ。
-
-<!-- TODO: 復元画像と潜在空間の可視化を挿入 -->
-
-
-めたん：ただ、音声は画像よりずっと細かい情報が必要なので、VQを1段だけ使うと、代表点が粗すぎて音質が足りません。そこで音声では、RVQ（残差ベクトル量子化）がよく使われます。まず1段目のVQで大まかに量子化し、元のベクトルとのズレ（残差）を2段目のVQで量子化する。さらにその残差を3段目で……と重ねていくんです。
-
-ずんだもん：四捨五入したあとの端数を、また四捨五入していく感じなのだ？
-
-めたん：その通りです。段数を増やすほど潜在空間の中の細かい位置まで表せるので、音質は上がりますが、その分ビットレートも増えます。段数で、音質とデータ量のバランスを調整できるわけですね。Mimiもこの仕組みで、約1.1kbpsという低いビットレートを実現しています。
-
-つむぎ：じゃあ最初の話に戻ると、Neural Codecで届く声って……
-
-めたん：受け取った番号をもとに、デコーダーが「それらしい声」を新しく作り直したもの、ということになります。
-
-ずんだもん：やっぱり本人の声じゃなかったのだ！ でも、聞き分けられないなら本人の声と同じ……なのか？
-
+## まとめ
+ 
+めたん：最後に、今回の内容を振り返りましょう。
+ 
+- **Codec**：データを符号に変換し、符号から復元する仕組み。人間が気づきにくい情報を捨てて、データ量を減らす。
+- **VQ-VAE**：エンコーダーでデータを潜在ベクトルに変換し、コードブックのいちばん近い代表点に置き換え（量子化）、デコーダーで復元する。データは「代表点の番号」の列として送れる。
+- **学習の工夫**：argminは微分できないので、Straight-Throughで勾配を通す。コードブックはCodebook LossとCommitment Lossで学習する。
+- **RVQ**：残った誤差を別のコードブックで繰り返し量子化して、精度を上げる。使う段数で、音質と通信量のバランスを調整できる。
+ 
+Codecとは、データをよりコンパクトな符号に変換し、また符号から復元する仕組みです。復元したデータは、人間の感覚で大雑把だから、復元したデータが若干誤差が入るでもある程度許される。
+音声や画像のCodecとして、VQ-VAEがよく使われて、データを潜在ベクトルに変換し、量子化することによって、データ量を劇的に減らすことができます。
+しかし、普通の深層学習と違って、VQVAEの学習において、Staright Throughやコードブック用の余分のLossを用意する必要があります。
+現代にて、より精度を追求するため、残差ベクトル量子化という、数段階の量子化手法がよく使われます。
 
 参考文献
 - https://zenn.dev/aratako_lm/articles/1214925e96bd58
