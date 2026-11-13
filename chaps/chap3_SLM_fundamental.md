@@ -51,8 +51,22 @@ Speech:
 
 めたん：じゃもし、RVQを使って、十段階の音声トークンに拡張すれば
 
+```Bash
+<|im_start|>system
+convert the provided text to speech reference to the following:
 
+Text:
+<|speaker:0|>また、東寺のように、五大明王と呼ばれる、主要な明王の中央に配されることも多い。
 
+Speech:
+{VQPart: reference.codes, shape=(10, 149)}<|im_end|>　# <- ここは10段階になります
+
+<|im_start|>user
+<|speaker:0|>吾輩は猫である。名前はまだない。<|im_end|>
+
+<|im_start|>assistant
+<|voice|>
+```
 
 つむぎ：待って、このプロンプトだとそのまま使えないよ。このプロンプトの形がおかしいわ、音声のコードのところ、でこぼこになっているじゃない。文字のプロンプトは基本、一行で完結できるに対して、ここの音声tokenが十行必要。だからそのまま埋め込みできるはずがないです。これを一列に整列するつもりなのか？
 
@@ -399,3 +413,12 @@ wavs, sr = model.generate_custom_voice(
 - Lee et al., "Autoregressive Image Generation using Residual Quantization" (RQ-Transformer), 2022. https://arxiv.org/abs/2203.01941
 - Défossez et al., "Moshi: a speech-text foundation model for real-time dialogue", 2024. https://arxiv.org/abs/2410.00037
 
+# 音声言語モデルの構造
+
+本節では、実際に音声言語モデルを動かして、何かを生成しながら、その構造を見てみようと思います。
+
+使うモデルはこちら、「Fish Audio S2」となります。このモデルは特徴として、完全に自己回帰モデルで、Difussionを使わずに、高品質の音声を合成することができます。ちなみに、「Qwen3TTS」などのモデルは、同じ完全たる自己回帰モデルで、「Irodori-TTS」などのモデルは、ある程度Difussionを使うので言語モデルとの類似性がFishほどではない。
+
+細かいディテールを省けて、大体的な流れを紹介するつもりです。
+
+前の節で紹介した、Codecにして、音声言語モデルのTokenizerにもなるVQVAE
