@@ -16,6 +16,7 @@ dependencies = [
     "torchcodec>=0.16.0",
     "torchview>=0.2.7",
     "torchvision>=0.29.0",
+    "transformers>=5.22.2",
 ]
 
 [[tool.uv.index]]
