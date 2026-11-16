@@ -1,1 +1,1 @@
-<!-- SFT and GRPO on slow Model -->
+<!-- SFT and GRPO on Fast Model -->
